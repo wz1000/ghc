@@ -32,6 +32,7 @@ import SrcLoc
 import TcHsSyn                    ( hsPatType )
 import Type                       ( Type )
 import Var                        ( Id, Var, setVarName, varName, varType )
+import TcRnTypes
 
 import HieTypes
 import HieUtils
@@ -53,8 +54,6 @@ type RenamedSource     = ( HsGroup GhcRn, [LImportDecl GhcRn]
                          , Maybe [(LIE GhcRn, Avails)]
                          , Maybe LHsDocString )
 -}
-type TypecheckedSource = LHsBinds GhcTc
-
 
 {- Note [Name Remapping]
 The Typechecker introduces new names for mono names in AbsBinds.
@@ -87,7 +86,7 @@ modifyState = foldr go id
 type HieM = ReaderT HieState Hsc
 
 -- | Construct an 'HieFile' from the outputs of the typechecker.
-mkHieFile :: ModSummary -> TypecheckedSource -> Hsc HieFile
+mkHieFile :: ModSummary -> TcGblEnv -> Hsc HieFile
 mkHieFile ms ts = do
   (asts', arr) <- getCompressedAsts ts
   let Just src_file = ml_hs_file $ ms_location ms
@@ -101,14 +100,24 @@ mkHieFile ms ts = do
       , hie_hs_src = src
       }
 
-getCompressedAsts :: TypecheckedSource -> Hsc (HieASTs TypeIndex, A.Array TypeIndex HieTypeFlat)
+getCompressedAsts :: TcGblEnv -> Hsc (HieASTs TypeIndex, A.Array TypeIndex HieTypeFlat)
 getCompressedAsts ts = do
   asts <- enrichHie ts
   return $ compressTypes asts
 
-enrichHie :: TypecheckedSource -> Hsc (HieASTs Type)
-enrichHie ts = flip runReaderT initState $ do
-    tasts <- toHie $ fmap (BC RegularBind ModuleScope) ts
+enrichHie :: TcGblEnv -> Hsc (HieASTs Type)
+enrichHie tcg = flip runReaderT initState $ do
+    tasts <- toHie $ fmap (BC RegularBind ModuleScope) (tcg_binds tcg)
+    let
+      imports = tcg_rn_imports tcg
+      exports = tcg_rn_exports tcg
+      rules   = tcg_rules tcg
+      fordecs = tcg_fords tcg
+
+    imps <- toHie $ filter (not . ideclImplicit . unLoc) imports
+    exps <- toHie $ fmap (map $ IEC Export . fst) exports
+    ruleasts <- toHie rules
+    forasts <- toHie fordecs
     let spanFile children = case children of
           [] -> mkRealSrcSpan (mkRealSrcLoc "" 1 1) (mkRealSrcLoc "" 1 1)
           _ -> mkRealSrcSpan (realSrcSpanStart $ nodeSpan $ head children)
@@ -123,7 +132,14 @@ enrichHie ts = flip runReaderT initState $ do
           $ M.fromListWith (++)
           $ map (\x -> (srcSpanFile (nodeSpan x),[x])) flat_asts
 
-        flat_asts = tasts
+        flat_asts = concat
+          [ tasts
+          , imps
+          , exps
+          , ruleasts
+          , forasts
+          ]
+
     return asts
 
 getRealSpan :: SrcSpan -> Maybe Span
@@ -382,6 +398,8 @@ instance ToHie (Context (Located Name)) where
       _ -> pure []
 
 -- | Dummy instances - never called
+instance ToHie (TScoped (LHsSigType GhcTc)) where
+  toHie _ = pure []
 instance ToHie (TScoped (LHsSigWcType GhcTc)) where
   toHie _ = pure []
 instance ToHie (TScoped (LHsWcType GhcTc)) where
@@ -1547,7 +1565,7 @@ instance ToHie (LDefaultDecl GhcRn) where
         ]
       XDefaultDecl _ -> []
 
-instance ToHie (LForeignDecl GhcRn) where
+instance ToHie (LForeignDecl GhcTc) where
   toHie (L span decl) = concatM $ makeNode decl span : case decl of
       ForeignImport {fd_name = name, fd_sig_ty = sig, fd_fi = fi} ->
         [ toHie $ C (ValBind RegularBind ModuleScope $ getRealSpan span) name
@@ -1601,14 +1619,14 @@ instance ToHie (Context (Located a)) => ToHie (AnnProvenance a) where
   toHie (TypeAnnProvenance a) = toHie $ C Use a
   toHie ModuleAnnProvenance = pure []
 
-instance ToHie (LRuleDecls GhcRn) where
+instance ToHie (LRuleDecls GhcTc) where
   toHie (L span decl) = concatM $ makeNode decl span : case decl of
       HsRules _ _ rules ->
         [ toHie rules
         ]
       XRuleDecls _ -> []
 
-instance ToHie (LRuleDecl GhcRn) where
+instance ToHie (LRuleDecl GhcTc) where
   toHie (L _ (XRuleDecl _)) = pure []
   toHie (L span r@(HsRule _ rname _ tybndrs bndrs exprA exprB)) = concatM
         [ makeNode r span
@@ -1623,7 +1641,7 @@ instance ToHie (LRuleDecl GhcRn) where
           exprA_sc = mkLScope exprA
           exprB_sc = mkLScope exprB
 
-instance ToHie (RScoped (LRuleBndr GhcRn)) where
+instance ToHie (RScoped (LRuleBndr GhcTc)) where
   toHie (RS sc (L span bndr)) = concatM $ makeNode bndr span : case bndr of
       RuleBndr _ var ->
         [ toHie $ C (ValBind RegularBind sc Nothing) var

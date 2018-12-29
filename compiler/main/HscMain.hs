@@ -413,7 +413,7 @@ mkAndWriteHieFile :: ModSummary -> TcGblEnv -> Hsc ()
 mkAndWriteHieFile mod_summary tc_result = do
   dflags <- getDynFlags
   when (gopt Opt_WriteHie dflags) $ do
-    hieFile <- mkHieFile mod_summary (tcg_binds tc_result)
+    hieFile <- mkHieFile mod_summary tc_result
     let out_file = ml_hie_file $ ms_location mod_summary
     liftIO $ writeHieFile out_file hieFile
 
