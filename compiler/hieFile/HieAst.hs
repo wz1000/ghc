@@ -48,9 +48,11 @@ import Control.Monad.Trans.Reader
 import Control.Monad.Trans.Class  ( lift )
 
 -- These synonyms match those defined in main/GHC.hs
+{-
 type RenamedSource     = ( HsGroup GhcRn, [LImportDecl GhcRn]
                          , Maybe [(LIE GhcRn, Avails)]
                          , Maybe LHsDocString )
+-}
 type TypecheckedSource = LHsBinds GhcTc
 
 
@@ -85,9 +87,9 @@ modifyState = foldr go id
 type HieM = ReaderT HieState Hsc
 
 -- | Construct an 'HieFile' from the outputs of the typechecker.
-mkHieFile :: ModSummary -> TypecheckedSource -> RenamedSource -> Hsc HieFile
-mkHieFile ms ts rs = do
-  (asts', arr) <- getCompressedAsts ts rs
+mkHieFile :: ModSummary -> TypecheckedSource -> Hsc HieFile
+mkHieFile ms ts = do
+  (asts', arr) <- getCompressedAsts ts
   let Just src_file = ml_hs_file $ ms_location ms
   src <- liftIO $ BS.readFile src_file
   return $ HieFile
@@ -99,18 +101,14 @@ mkHieFile ms ts rs = do
       , hie_hs_src = src
       }
 
-getCompressedAsts :: TypecheckedSource -> RenamedSource
-  -> Hsc (HieASTs TypeIndex, A.Array TypeIndex HieTypeFlat)
-getCompressedAsts ts rs = do
-  asts <- enrichHie ts rs
+getCompressedAsts :: TypecheckedSource -> Hsc (HieASTs TypeIndex, A.Array TypeIndex HieTypeFlat)
+getCompressedAsts ts = do
+  asts <- enrichHie ts
   return $ compressTypes asts
 
-enrichHie :: TypecheckedSource -> RenamedSource -> Hsc (HieASTs Type)
-enrichHie ts (hsGrp, imports, exports, _) = flip runReaderT initState $ do
+enrichHie :: TypecheckedSource -> Hsc (HieASTs Type)
+enrichHie ts = flip runReaderT initState $ do
     tasts <- toHie $ fmap (BC RegularBind ModuleScope) ts
-    rasts <- processGrp hsGrp
-    imps <- toHie $ filter (not . ideclImplicit . unLoc) imports
-    exps <- toHie $ fmap (map $ IEC Export . fst) exports
     let spanFile children = case children of
           [] -> mkRealSrcSpan (mkRealSrcLoc "" 1 1) (mkRealSrcLoc "" 1 1)
           _ -> mkRealSrcSpan (realSrcSpanStart $ nodeSpan $ head children)
@@ -125,26 +123,8 @@ enrichHie ts (hsGrp, imports, exports, _) = flip runReaderT initState $ do
           $ M.fromListWith (++)
           $ map (\x -> (srcSpanFile (nodeSpan x),[x])) flat_asts
 
-        flat_asts = concat
-          [ tasts
-          , rasts
-          , imps
-          , exps
-          ]
+        flat_asts = tasts
     return asts
-  where
-    processGrp grp = concatM
-      [ toHie $ fmap (RS ModuleScope ) hs_valds grp
-      , toHie $ hs_splcds grp
-      , toHie $ hs_tyclds grp
-      , toHie $ hs_derivds grp
-      , toHie $ hs_fixds grp
-      , toHie $ hs_defds grp
-      , toHie $ hs_fords grp
-      , toHie $ hs_warnds grp
-      , toHie $ hs_annds grp
-      , toHie $ hs_ruleds grp
-      ]
 
 getRealSpan :: SrcSpan -> Maybe Span
 getRealSpan (RealSrcSpan sp) = Just sp

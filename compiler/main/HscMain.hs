@@ -406,33 +406,36 @@ extract_renamed_stuff mod_summary tc_result = do
     liftIO $ dumpIfSet_dyn dflags Opt_D_dump_rn_ast "Renamer" $
                            showAstData NoBlankSrcSpan rn_info
 
-    -- Create HIE files
-    when (gopt Opt_WriteHie dflags) $ do
-        hieFile <- mkHieFile mod_summary (tcg_binds tc_result)
-                                         (fromJust rn_info)
-        let out_file = ml_hie_file $ ms_location mod_summary
-        liftIO $ writeHieFile out_file hieFile
-
-        -- Validate HIE files
-        when (gopt Opt_ValidateHie dflags) $ do
-            hs_env <- Hsc $ \e w -> return (e, w)
-            liftIO $ do
-              -- Validate Scopes
-              case validateScopes $ getAsts $ hie_asts hieFile of
-                  [] -> putMsg dflags $ text "Got valid scopes"
-                  xs -> do
-                    putMsg dflags $ text "Got invalid scopes"
-                    mapM_ (putMsg dflags) xs
-              -- Roundtrip testing
-              nc <- readIORef $ hsc_NC hs_env
-              (file', _) <- readHieFile nc out_file
-              case diffFile hieFile file' of
-                [] ->
-                  putMsg dflags $ text "Got no roundtrip errors"
-                xs -> do
-                  putMsg dflags $ text "Got roundtrip errors"
-                  mapM_ (putMsg dflags) xs
     return rn_info
+
+-- | Create and write HIE files if Opt_WriteHie is set
+mkAndWriteHieFile :: ModSummary -> TcGblEnv -> Hsc ()
+mkAndWriteHieFile mod_summary tc_result = do
+  dflags <- getDynFlags
+  when (gopt Opt_WriteHie dflags) $ do
+    hieFile <- mkHieFile mod_summary (tcg_binds tc_result)
+    let out_file = ml_hie_file $ ms_location mod_summary
+    liftIO $ writeHieFile out_file hieFile
+
+    -- Validate HIE files
+    when (gopt Opt_ValidateHie dflags) $ do
+        hs_env <- Hsc $ \e w -> return (e, w)
+        liftIO $ do
+          -- Validate Scopes
+          case validateScopes $ getAsts $ hie_asts hieFile of
+              [] -> putMsg dflags $ text "Got valid scopes"
+              xs -> do
+                putMsg dflags $ text "Got invalid scopes"
+                mapM_ (putMsg dflags) xs
+          -- Roundtrip testing
+          nc <- readIORef $ hsc_NC hs_env
+          (file', _) <- readHieFile nc out_file
+          case diffFile hieFile file' of
+            [] ->
+              putMsg dflags $ text "Got no roundtrip errors"
+            xs -> do
+              putMsg dflags $ text "Got roundtrip errors"
+              mapM_ (putMsg dflags) xs
 
 
 -- -----------------------------------------------------------------------------
@@ -442,6 +445,7 @@ hscTypecheckRename :: HscEnv -> ModSummary -> HsParsedModule
 hscTypecheckRename hsc_env mod_summary rdr_module = runHsc hsc_env $ do
     tc_result <- hsc_typecheck True mod_summary (Just rdr_module)
     rn_info <- extract_renamed_stuff mod_summary tc_result
+    mkAndWriteHieFile mod_summary tc_result
     return (tc_result, rn_info)
 
 -- | Rename and typecheck a module, but don't return the renamed syntax
@@ -451,6 +455,7 @@ hscTypecheck :: Bool -- ^ Keep renamed source?
 hscTypecheck keep_rn mod_summary mb_rdr_module = do
     tc_result <- hsc_typecheck keep_rn mod_summary mb_rdr_module
     _ <- extract_renamed_stuff mod_summary tc_result
+    mkAndWriteHieFile mod_summary tc_result
     return tc_result
 
 hsc_typecheck :: Bool -- ^ Keep renamed source?
@@ -466,7 +471,7 @@ hsc_typecheck keep_rn mod_summary mb_rdr_module = do
         inner_mod = canonicalizeHomeModule dflags mod_name
         src_filename  = ms_hspp_file mod_summary
         real_loc = realSrcLocSpan $ mkRealSrcLoc (mkFastString src_filename) 1 1
-        keep_rn' = gopt Opt_WriteHie dflags || keep_rn
+        keep_rn' = keep_rn
     MASSERT( moduleUnitId outer_mod == thisPackage dflags )
     if hsc_src == HsigFile && not (isHoleModule inner_mod)
         then ioMsgMaybe $ tcRnInstantiateSignature hsc_env outer_mod' real_loc
