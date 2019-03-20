@@ -118,6 +118,8 @@ import GHC.LanguageExtensions (Extension)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Char
+import Data.List.NonEmpty (NonEmpty(..))
+import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as M
 import Data.Int
 import qualified Data.IntMap as IM

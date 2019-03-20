@@ -298,11 +298,12 @@ tcRnModuleTcRnM hsc_env mod_sum
         ; -- If the whole module is warned about or deprecated
           -- (via mod_deprec) record that in tcg_warns. If we do thereby add
           -- a WarnAll, it will override any subsequent deprecations added to tcg_warns
-          let { tcg_env1 = case mod_deprec of
+        ; tcg_env1 <- case mod_deprec of
                              Just (L _ txt) ->
-                               tcg_env {tcg_warns = WarnAll txt}
-                             Nothing            -> tcg_env
-              }
+                               do { txt' <- traverse rnHsDoc txt
+                                  ; pure tcg_env {tcg_warns = WarnAll txt'}
+                                  }
+                             Nothing            -> pure tcg_env
         ; setGblEnv tcg_env1
           $ do { -- Rename and type check the declarations
                  traceRn "rn1a" empty
@@ -332,11 +333,14 @@ tcRnModuleTcRnM hsc_env mod_sum
                         -- because the latter might add new bindings for
                         -- boot_dfuns, which may be mentioned in imported
                         -- unfoldings.
-                        -- Report unused names
+
+                        -- Rename the module header
+                      ; tcg_env <- rnMbDocHdr maybe_doc_hdr tcg_env ;
+                      ; -- Report unused names
                         -- Do this /after/ typeinference, so that when reporting
                         -- a function with no type signature we can give the
                         -- inferred type
-                        reportUnusedNames tcg_env hsc_src
+                      ; reportUnusedNames tcg_env hsc_src
                       ; -- add extra source files to tcg_dependent_files
                         addDependentFiles src_files
                         -- Ensure plugins run with the same tcg_env that we pass in
@@ -3130,7 +3134,7 @@ runRenamerPlugin gbl_env hs_group = do
 -- exception/signal an error.
 type RenamedStuff =
         (Maybe (HsGroup GhcRn, [LImportDecl GhcRn], Maybe [(LIE GhcRn, Avails)],
-                Maybe LHsDocString))
+                Maybe (LHsDoc Name)))
 
 -- | Extract the renamed information from TcGblEnv.
 getRenamedStuff :: TcGblEnv -> RenamedStuff

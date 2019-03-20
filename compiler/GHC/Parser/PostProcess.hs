@@ -2635,6 +2635,7 @@ mkExport (L lc cconv) (L le (StringLiteral esrc entity _), v, ty)
   where
     entity' | nullFS entity = mkExtName (unLoc v)
             | otherwise     = entity
+    StringLiteral esrc entity = sl
 
 -- Supplying the ext_name in a foreign decl is optional; if it
 -- isn't there, the Haskell name is assumed. Note that no transformation
@@ -2985,6 +2986,14 @@ mkMultTy u tok t@(L _ (HsTyLit _ (HsNumTy (SourceText "1") 1)))
   -- See #18888 for the use of (SourceText "1") above
   = HsLinearArrow u (Just $ AddEpAnn AnnPercentOne (EpaSpan $ realSrcSpan $ combineLocs tok (reLoc t)))
 mkMultTy u tok t = HsExplicitMult u (Just $ AddEpAnn AnnPercent (EpaSpan $ realSrcSpan $ getLoc tok)) t
+
+mkLHsDocTy :: LHsType GhcPs -> LHsDoc RdrName -> LHsType GhcPs
+mkLHsDocTy t doc =
+  let loc = getLoc t `combineSrcSpans` getLoc doc
+  in cL loc (HsDocTy noExt t doc)
+
+mkLHsDocTyMaybe :: LHsType GhcPs -> Maybe (LHsDoc RdrName) -> LHsType GhcPs
+mkLHsDocTyMaybe t = maybe t (mkLHsDocTy t)
 
 -----------------------------------------------------------------------------
 -- Token symbols
