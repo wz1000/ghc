@@ -35,6 +35,8 @@ import GHC.Utils.Outputable
 import GHC.Types.SrcLoc (Located, unLoc, noLoc)
 import GHC.Utils.Panic
 
+
+-- | Allows passes other than GhcPass to customize the result of NoGhcTc
 import Data.Kind
 
 {-
@@ -316,7 +318,10 @@ type LIdP p = Located (IdP p)
 type family NoGhcTc (p :: Type) where
     -- this way, GHC can figure out that the result is a GhcPass
   NoGhcTc (GhcPass pass) = GhcPass (NoGhcTcPass pass)
-  NoGhcTc other          = other
+  NoGhcTc other          = NoGhcTcNonGhc other
+
+-- | Allows passes other than GhcPass to customize the result of NoGhcTc
+type family NoGhcTcNonGhc (p :: Type)
 
 type family NoGhcTcPass (p :: Pass) :: Pass where
   NoGhcTcPass 'Typechecked = 'Renamed
