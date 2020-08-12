@@ -22,6 +22,11 @@ import GHC.Core.TyCo.Rep
 data With (f :: * -> *) pass
 
 type instance XRec (With f p) a = (f a, XRec p a)
+type instance XXValBindsLR  (With a pass) (With a pass) = NHsValBindsLR (With a pass)
+type instance XXExpr (With a pass) = XXExprGhcTc (With a pass)
+type instance XXPat (With a pass) = CoPat (With a pass)
+type instance XXCmd (With a pass) = HsWrap HsCmd (With a pass)
+
 
 -- HsExpr extension points
 type instance XVar               (With a pass) = XVar            pass
@@ -65,7 +70,6 @@ type instance XTick              (With a pass) = XTick           pass
 type instance XBinTick           (With a pass) = XBinTick        pass
 type instance XTickPragma        (With a pass) = XTickPragma     pass
 type instance XPragE             (With a pass) = XPragE     pass
-type instance XXExpr             (With a pass) = XXExpr          pass
 
 -- Other extension points
 type instance IdP                (With a pass) = IdP pass
@@ -107,8 +111,6 @@ type instance XAbsBinds          (With a pass) (With a pass) = XAbsBinds pass pa
 type instance XValBinds          (With a pass) (With a pass) = XValBinds pass pass
 type instance XHsValBinds        (With a pass) (With a pass) = XHsValBinds pass pass
 type instance XHsIPBinds         (With a pass) (With a pass) = XHsIPBinds pass pass
-
-type instance XXValBindsLR       (With a pass) (With a pass) = NHsValBindsLR (With a pass)
 
 type instance XPSB               (With a pass) (With a pass) = XPSB pass pass
  
@@ -301,8 +303,10 @@ hsExprType' (HsBinTick a n m x) = (ty, HsBinTick a n m x')
   where x'@(Typed ty, _) = lhsExprType x
 hsExprType' (HsPragE a prag x) = (ty, HsPragE a (convertPrag prag) x')
   where x'@(Typed ty, _) = lhsExprType x
-hsExprType' (XExpr (WrapExpr wrap)) = undefined
-hsExprType' (XExpr (ExpansionExpr wrap)) = undefined
+hsExprType' (XExpr (WrapExpr (HsWrap wrap x))) = (undefined, XExpr (WrapExpr (HsWrap wrap x')))
+  where (ty, x') = hsExprType' x
+hsExprType' (XExpr (ExpansionExpr (HsExpanded rn tc))) = (ty, XExpr $ ExpansionExpr $ HsExpanded rn tc')
+  where (ty, tc') = hsExprType' tc
 
 invalid :: a
 invalid = error "invalid"
@@ -410,7 +414,8 @@ patType' (NPlusKPat ty a (L l b) c d e)  = (ty, NPlusKPat ty (Typed aty, a) (Typ
   where aty = varType $ unLoc a
 patType' (SigPat ty p sig)         = (ty, SigPat ty (lPatType p) sig)
 patType' (SplicePat a splice)      = (undefined , undefined)
-patType' (XPat (CoPat wrap inner ty)) = (ty, undefined)
+patType' (XPat (CoPat wrap inner ty)) = (ty, XPat (CoPat wrap inner' ty))
+  where inner' = patType inner
 
 detsType :: HsConPatDetails GhcTc -> HsConPatDetails (With Typed GhcTc)
 detsType = convertHsConDets lPatType (hsRecFieldsType convertFieldOcc lPatType)
@@ -627,4 +632,4 @@ hsCmdType cmd =
     HsCmdDo ext stmts ->
       let stmts' = fmap (map (\x -> (Typed (), fmap (stmtType lhsCmdType) x))) stmts
       in HsCmdDo ext (Typed (), stmts')
-    XCmd wrap -> undefined
+    XCmd (HsWrap wrap cmd) -> XCmd (HsWrap wrap $ hsCmdType cmd)
